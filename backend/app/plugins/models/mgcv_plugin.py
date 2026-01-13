@@ -436,12 +436,18 @@ class MGCVModel(BaseModel):
         select = "TRUE" if params.get("select", False) else "FALSE"
         gamma = params.get("gamma", 1.0)
 
+        # Pre-convert Windows paths to forward slashes for R
+        data_path_r = data_path.replace('\\', '/')
+        output_model_path_r = output_model_path.replace('\\', '/')
+        results_path_r = results_path.replace('\\', '/')
+        gam_check_path_r = gam_check_path.replace('\\', '/')
+
         r_script = f'''
 library(mgcv)
 library(jsonlite)
 
 # Load data
-df <- read.csv("{data_path.replace('\\', '/')}")
+df <- read.csv("{data_path_r}")
 
 # Convert character columns to factors
 for (col in names(df)) {{
@@ -462,7 +468,7 @@ tryCatch({{
     )
     
     # Save model
-    saveRDS(model, file = "{output_model_path.replace('\\', '/')}")
+    saveRDS(model, file = "{output_model_path_r}")
     
     # Extract summary
     summ <- summary(model)
@@ -514,10 +520,10 @@ tryCatch({{
         results$accuracy <- accuracy
     }}
     
-    write(toJSON(results, auto_unbox = TRUE, pretty = TRUE), "{results_path.replace('\\', '/')}")
+    write(toJSON(results, auto_unbox = TRUE, pretty = TRUE), "{results_path_r}")
     
     # Run gam.check and save output
-    sink("{gam_check_path.replace('\\', '/')}")
+    sink("{gam_check_path_r}")
     gam.check(model)
     sink()
     
@@ -525,7 +531,7 @@ tryCatch({{
     
 }}, error = function(e) {{
     error_result <- list(error = conditionMessage(e))
-    write(toJSON(error_result, auto_unbox = TRUE), "{results_path.replace('\\', '/')}")
+    write(toJSON(error_result, auto_unbox = TRUE), "{results_path_r}")
     stop(e)
 }})
 '''
@@ -581,10 +587,15 @@ tryCatch({{
         
         pred_type = "response" if self.is_classifier else "response"
         
+        # Pre-convert Windows paths to forward slashes for R
+        model_file_r = self.model_file.replace('\\', '/')
+        data_path_r = data_path.replace('\\', '/')
+        out_pred_path_r = out_pred_path.replace('\\', '/')
+        
         r_script = f'''
 library(mgcv)
-model <- readRDS("{self.model_file.replace('\\', '/')}")
-new_data <- read.csv("{data_path.replace('\\', '/')}")
+model <- readRDS("{model_file_r}")
+new_data <- read.csv("{data_path_r}")
 
 # Convert character columns to factors
 for (col in names(new_data)) {{
@@ -594,7 +605,7 @@ for (col in names(new_data)) {{
 }}
 
 preds <- predict(model, new_data, type = "{pred_type}")
-write.csv(preds, "{out_pred_path.replace('\\', '/')}", row.names=FALSE)
+write.csv(preds, "{out_pred_path_r}", row.names=FALSE)
 '''
         with open(script_path, "w") as f:
             f.write(r_script)
@@ -623,10 +634,15 @@ write.csv(preds, "{out_pred_path.replace('\\', '/')}", row.names=FALSE)
         
         X.to_csv(data_path, index=False)
         
+        # Pre-convert Windows paths to forward slashes for R
+        model_file_r = self.model_file.replace('\\', '/')
+        data_path_r = data_path.replace('\\', '/')
+        out_pred_path_r = out_pred_path.replace('\\', '/')
+        
         r_script = f'''
 library(mgcv)
-model <- readRDS("{self.model_file.replace('\\', '/')}")
-new_data <- read.csv("{data_path.replace('\\', '/')}")
+model <- readRDS("{model_file_r}")
+new_data <- read.csv("{data_path_r}")
 
 for (col in names(new_data)) {{
     if (is.character(new_data[[col]])) {{
@@ -635,7 +651,7 @@ for (col in names(new_data)) {{
 }}
 
 probs <- predict(model, new_data, type = "response")
-write.csv(probs, "{out_pred_path.replace('\\', '/')}", row.names=FALSE)
+write.csv(probs, "{out_pred_path_r}", row.names=FALSE)
 '''
         with open(script_path, "w") as f:
             f.write(r_script)
@@ -699,11 +715,15 @@ write.csv(probs, "{out_pred_path.replace('\\', '/')}", row.names=FALSE)
         script_path = os.path.abspath(os.path.join(self.tmp_dir, f"explain_script_{run_id}.R"))
         results_path = os.path.abspath(os.path.join(self.tmp_dir, f"explain_{run_id}.json"))
         
+        # Pre-convert Windows paths to forward slashes for R
+        model_file_r = self.model_file.replace('\\', '/')
+        results_path_r = results_path.replace('\\', '/')
+        
         r_script = f'''
 library(mgcv)
 library(jsonlite)
 
-model <- readRDS("{self.model_file.replace('\\', '/')}")
+model <- readRDS("{model_file_r}")
 summ <- summary(model)
 
 # Extract feature importance based on chi-square statistic
@@ -741,7 +761,7 @@ results <- list(
     r_squared = summ$r.sq
 )
 
-write(toJSON(results, auto_unbox = TRUE, pretty = TRUE), "{results_path.replace('\\', '/')}")
+write(toJSON(results, auto_unbox = TRUE, pretty = TRUE), "{results_path_r}")
 '''
         
         with open(script_path, "w") as f:
