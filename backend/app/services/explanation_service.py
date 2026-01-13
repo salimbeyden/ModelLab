@@ -238,11 +238,15 @@ class ExplanationService:
         # Create R script to extract shape functions using plot.gam data
         output_json = os.path.join(run_dir, "shapes_extracted.json")
         
+        # Pre-convert Windows paths to forward slashes for R
+        model_path_r = model_path.replace('\\', '/')
+        output_json_r = output_json.replace('\\', '/')
+        
         r_script = f'''
 library(mgcv)
 library(jsonlite)
 
-model <- readRDS("{model_path.replace('\\', '/')}")
+model <- readRDS("{model_path_r}")
 
 # Use plot.gam to extract smooth term data (this is the standard approach)
 # plot.gam returns the data used for plotting without actually plotting
@@ -293,7 +297,7 @@ result <- list(
     feature_names = I(feature_names)
 )
 
-write(toJSON(result, auto_unbox = TRUE), "{output_json.replace('\\', '/')}")
+write(toJSON(result, auto_unbox = TRUE), "{output_json_r}")
 '''
         
         # Execute R script
@@ -632,12 +636,17 @@ write(toJSON(result, auto_unbox = TRUE), "{output_json.replace('\\', '/')}")
         with open(input_json, "w") as f:
             json.dump(feature_values, f)
         
+        # Pre-convert Windows paths to forward slashes for R
+        model_path_r = model_path.replace('\\', '/')
+        input_json_r = input_json.replace('\\', '/')
+        output_json_r = output_json.replace('\\', '/')
+        
         r_script = f'''
 library(mgcv)
 library(jsonlite)
 
-model <- readRDS("{model_path.replace('\\', '/')}")
-input <- fromJSON("{input_json.replace('\\', '/')}")
+model <- readRDS("{model_path_r}")
+input <- fromJSON("{input_json_r}")
 
 # Create prediction dataframe
 new_data <- as.data.frame(input)
@@ -652,7 +661,7 @@ result <- list(
     contributions = as.list(terms[1,])
 )
 
-write(toJSON(result, auto_unbox = TRUE), "{output_json.replace('\\', '/')}")
+write(toJSON(result, auto_unbox = TRUE), "{output_json_r}")
 '''
         
         script_path = os.path.join(run_dir, "whatif_script.R")
@@ -1109,10 +1118,15 @@ write(toJSON(result, auto_unbox = TRUE), "{output_json.replace('\\', '/')}")
         
         X.to_csv(data_path, index=False)
         
+        # Pre-convert Windows paths to forward slashes for R
+        model_path_r = model_path.replace('\\', '/')
+        data_path_r = data_path.replace('\\', '/')
+        output_path_r = output_path.replace('\\', '/')
+        
         r_script = f'''
 library(mgcv)
-model <- readRDS("{model_path.replace('\\', '/')}")
-new_data <- read.csv("{data_path.replace('\\', '/')}")
+model <- readRDS("{model_path_r}")
+new_data <- read.csv("{data_path_r}")
 
 # Convert character columns to factors
 for (col in names(new_data)) {{
@@ -1122,7 +1136,7 @@ for (col in names(new_data)) {{
 }}
 
 preds <- predict(model, new_data, type = "response")
-write.csv(preds, "{output_path.replace('\\', '/')}", row.names=FALSE)
+write.csv(preds, "{output_path_r}", row.names=FALSE)
 '''
         
         script_path = os.path.join(run_dir, "predict_script.R")

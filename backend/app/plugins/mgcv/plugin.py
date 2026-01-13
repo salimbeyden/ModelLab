@@ -71,6 +71,9 @@ class MgcvPlugin(ModelPlugin):
         formula = params.get("formula", "target ~ .")
         family = params.get("family", "gaussian")
         
+        # Pre-convert path for R
+        data_path_r = os.path.join(context.data_dir, 'dataset.csv').replace(os.sep, '/')
+        
         # This is a simplified R script template
         script = f"""
         library(mgcv)
@@ -78,7 +81,7 @@ class MgcvPlugin(ModelPlugin):
         
         # Load data (assuming parquet or csv)
         # For now, hardcoded assumption of 'train.csv' in run dir or similar
-        data <- read_csv("{os.path.join(context.data_dir, 'dataset.csv').replace(os.sep, '/')}")
+        data <- read_csv("{data_path_r}")
         
         # Train model
         model <- gam(as.formula("{formula}"), data=data, family={family})
