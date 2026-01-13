@@ -89,10 +89,26 @@ class WhatIfRequest(BaseModel):
     feature_values: Dict[str, Union[float, str, None]]
 
 
+class ICEPoint(BaseModel):
+    """Single point on an ICE (Individual Conditional Expectation) curve."""
+    x: Union[float, str]  # Feature value
+    y: float  # Predicted value at this feature value
+
+
+class ICEPlot(BaseModel):
+    """ICE plot for a single feature - shows how prediction changes as feature varies."""
+    feature_name: str
+    feature_type: str  # 'numeric' or 'categorical'
+    current_value: Union[float, str, None]  # Current slider value
+    current_prediction: float  # Current prediction
+    points: List[ICEPoint]  # Prediction curve as feature varies
+
+
 class WhatIfResponse(BaseModel):
     """Response schema for What-If predictions."""
     explanation: LocalExplanation
     feature_ranges: Dict[str, Dict[str, Any]]  # For slider bounds
+    ice_plots: Optional[List[ICEPlot]] = None  # Individual Conditional Expectation plots
 
 
 # ==================== FEATURE RANGE SCHEMAS ====================

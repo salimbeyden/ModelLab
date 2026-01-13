@@ -15,9 +15,10 @@ from sklearn.metrics import (
     roc_auc_score, log_loss, confusion_matrix, precision_recall_fscore_support
 )
 
+from app.core.config import settings
 from app.core.explanation_schemas import (
     ShapePoint, ShapeFunction, InteractionShape, GlobalExplanation,
-    FeatureContribution, LocalExplanation, WhatIfResponse,
+    FeatureContribution, LocalExplanation, WhatIfResponse, ICEPoint, ICEPlot,
     NumericRange, CategoricalRange, FeatureRange, FeatureRangesResponse,
     RegressionMetrics, ClassificationMetrics, ResidualPoint, ResidualAnalysis,
     ActualVsPredicted, PerformanceResponse, DashboardSummary, ModelDashboardData,
@@ -43,10 +44,8 @@ class ExplanationService:
     """Service for extracting model explanations and interpretability data."""
     
     def __init__(self):
-        # Use absolute paths relative to backend directory
-        backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        self.runs_dir = os.path.join(backend_dir, "runs")
-        self.data_dir = os.path.join(backend_dir, "data")
+        self.runs_dir = settings.RUNS_DIR
+        self.data_dir = settings.DATA_DIR
         self._rscript_cmd = None  # Cache R command path
     
     def _get_r_command(self) -> str:
@@ -603,6 +602,14 @@ write(toJSON(result, auto_unbox = TRUE), "{output_json_r}")
         # Get feature ranges
         feature_ranges = self._get_feature_ranges_dict(run_id)
         
+        # Generate ICE plots for EBM (using native EBM shape functions)
+        ice_plots = self._generate_ebm_ice_plots(
+            model=model,
+            feature_values=feature_values,
+            is_classification=is_classification,
+            current_prediction=prediction
+        )
+        
         local_explanation = LocalExplanation(
             model_id=run_id,
             prediction=prediction,
@@ -614,8 +621,83 @@ write(toJSON(result, auto_unbox = TRUE), "{output_json_r}")
         
         return WhatIfResponse(
             explanation=local_explanation,
-            feature_ranges=feature_ranges
+            feature_ranges=feature_ranges,
+            ice_plots=ice_plots
         )
+    
+    def _generate_ebm_ice_plots(
+        self,
+        model,
+        feature_values: Dict[str, Any],
+        is_classification: bool,
+        current_prediction: float,
+        n_points: int = 50,
+        top_n_features: int = 8
+    ) -> List[ICEPlot]:
+        """
+        Generate ICE plots for EBM using the model's native shape functions.
+        EBM has exact shape functions, so we use those directly.
+        """
+        ice_plots = []
+        
+        try:
+            # Get EBM's global explanation to extract shape functions
+            global_exp = model.explain_global()
+            feature_names = global_exp.data()['names']
+            
+            # Get feature importance for sorting
+            try:
+                importances = global_exp.data().get('scores', [])
+                if importances:
+                    feature_imp = [(name, abs(imp) if isinstance(imp, (int, float)) else np.mean(np.abs(imp))) 
+                                   for name, imp in zip(feature_names, importances)]
+                    feature_imp.sort(key=lambda x: x[1], reverse=True)
+                    top_features = [f[0] for f in feature_imp[:top_n_features]]
+                else:
+                    top_features = feature_names[:top_n_features]
+            except Exception:
+                top_features = feature_names[:top_n_features]
+            
+            for fname in top_features:
+                try:
+                    idx = feature_names.index(fname)
+                    term_data = global_exp.data(idx)
+                    
+                    if term_data is None:
+                        continue
+                    
+                    x_vals = term_data.get('names', [])
+                    y_vals = term_data.get('scores', [])
+                    
+                    if not x_vals or not y_vals:
+                        continue
+                    
+                    # Determine feature type
+                    is_categorical = all(isinstance(x, str) for x in x_vals)
+                    current_val = feature_values.get(fname)
+                    
+                    points = []
+                    for x, y in zip(x_vals, y_vals):
+                        y_scalar = _to_scalar(y)
+                        points.append(ICEPoint(x=x, y=y_scalar))
+                    
+                    if points:
+                        ice_plots.append(ICEPlot(
+                            feature_name=fname,
+                            feature_type="categorical" if is_categorical else "numeric",
+                            current_value=current_val,
+                            current_prediction=current_prediction,
+                            points=points
+                        ))
+                        
+                except Exception as e:
+                    print(f"[EBM ICE] Failed for {fname}: {e}")
+                    continue
+                    
+        except Exception as e:
+            print(f"[EBM ICE] Failed to generate ICE plots: {e}")
+        
+        return ice_plots
     
     def _mgcv_what_if(
         self, 
@@ -731,43 +813,108 @@ write(toJSON(result, auto_unbox = TRUE), "{output_json_r}")
         if isinstance(saved_data, dict) and 'model' in saved_data:
             model = saved_data['model']
             feature_names = saved_data.get('feature_names', [])
+            categorical_features = saved_data.get('categorical_features', [])
         else:
             model = saved_data
             feature_names = list(getattr(model, 'feature_name_', []))
+            categorical_features = []
         
-        # Create input DataFrame
+        # Load training data to get proper categorical dtypes and categories
+        dataset_id = status["config"]["dataset_id"]
+        target = status["config"]["target"]
+        
+        from app.services.data_service import data_service
+        dataset_path = data_service.get_dataset_path(dataset_id)
+        
+        df_train = pd.read_csv(dataset_path) if dataset_path.endswith('.csv') else pd.read_parquet(dataset_path)
+        X_train = df_train.drop(columns=[target])
+        
+        # Prepare training data with proper categorical dtypes
+        for col in X_train.columns:
+            if X_train[col].dtype == 'object':
+                X_train[col] = X_train[col].astype('category')
+        
+        # Create input DataFrame with proper feature order
         input_data = {}
         for fname in feature_names:
             if fname in feature_values:
                 input_data[fname] = [feature_values[fname]]
             else:
-                input_data[fname] = [None]
+                # Use training mean/mode as fallback
+                if fname in X_train.columns:
+                    if X_train[fname].dtype.name == 'category':
+                        input_data[fname] = [X_train[fname].mode().iloc[0] if len(X_train[fname].mode()) > 0 else X_train[fname].iloc[0]]
+                    else:
+                        input_data[fname] = [X_train[fname].mean()]
+                else:
+                    input_data[fname] = [0]
         
         X = pd.DataFrame(input_data)
         
-        # Convert object columns to category
+        # Align categorical features with training data categories
         for col in X.columns:
-            if X[col].dtype == 'object':
-                X[col] = X[col].astype('category')
+            if col in X_train.columns:
+                if X_train[col].dtype.name == 'category':
+                    # Convert to same categorical dtype as training
+                    X[col] = pd.Categorical(X[col], categories=X_train[col].cat.categories)
+                elif X[col].dtype == 'object':
+                    X[col] = X[col].astype('category')
         
         # Determine if classification
-        task_type = status.get("task_type", "regression")
+        task_type = status.get("task_type", status["config"].get("task", "regression"))
         is_classification = task_type == "classification" or hasattr(model, 'classes_')
         
         # Get prediction and probability
-        raw_prediction = model.predict(X)[0]
+        try:
+            raw_prediction = model.predict(X)[0]
+        except Exception as e:
+            # Fallback: try with numeric conversion only
+            X_numeric = X.copy()
+            for col in X_numeric.columns:
+                if X_numeric[col].dtype.name == 'category':
+                    X_numeric[col] = X_numeric[col].cat.codes
+            raw_prediction = model.predict(X_numeric)[0]
+        
         prediction_probability = None
         
         if is_classification and hasattr(model, 'predict_proba'):
-            proba = model.predict_proba(X)[0]
+            try:
+                proba = model.predict_proba(X)[0]
+            except Exception:
+                X_numeric = X.copy()
+                for col in X_numeric.columns:
+                    if X_numeric[col].dtype.name == 'category':
+                        X_numeric[col] = X_numeric[col].cat.codes
+                proba = model.predict_proba(X_numeric)[0]
             prediction_probability = float(proba[-1]) if len(proba) > 1 else float(proba[0])
             prediction = float(prediction_probability)
         else:
             prediction = float(raw_prediction)
         
-        # Use SHAP for local explanation
-        explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(X)
+        # Use SHAP for local explanation with background data
+        # Use a sample of training data as background for better SHAP explanations
+        sample_size = min(100, len(X_train))
+        X_background = X_train.sample(n=sample_size, random_state=42)
+        
+        try:
+            # Try TreeExplainer with background data
+            explainer = shap.TreeExplainer(model, X_background)
+            shap_values = explainer.shap_values(X)
+        except Exception:
+            # Fallback to TreeExplainer without background
+            try:
+                explainer = shap.TreeExplainer(model)
+                shap_values = explainer.shap_values(X)
+            except Exception:
+                # Last resort: use numeric encoding for SHAP
+                X_numeric = X.copy()
+                X_bg_numeric = X_background.copy()
+                for col in X_numeric.columns:
+                    if X_numeric[col].dtype.name == 'category':
+                        X_numeric[col] = X_numeric[col].cat.codes
+                        X_bg_numeric[col] = X_bg_numeric[col].cat.codes
+                explainer = shap.TreeExplainer(model, X_bg_numeric)
+                shap_values = explainer.shap_values(X_numeric)
         
         # Handle classification (shap_values is list) vs regression (array)
         if isinstance(shap_values, list):
@@ -815,6 +962,18 @@ write(toJSON(result, auto_unbox = TRUE), "{output_json_r}")
         
         feature_ranges = self._get_feature_ranges_dict(run_id)
         
+        # Generate ICE (Individual Conditional Expectation) plots
+        # These show how prediction changes as each feature varies
+        ice_plots = self._generate_ice_plots(
+            model=model,
+            X_base=X,
+            X_train=X_train,
+            feature_names=feature_names,
+            feature_values=feature_values,
+            is_classification=is_classification,
+            current_prediction=prediction
+        )
+        
         local_explanation = LocalExplanation(
             model_id=run_id,
             prediction=prediction,
@@ -826,8 +985,125 @@ write(toJSON(result, auto_unbox = TRUE), "{output_json_r}")
         
         return WhatIfResponse(
             explanation=local_explanation,
-            feature_ranges=feature_ranges
+            feature_ranges=feature_ranges,
+            ice_plots=ice_plots
         )
+    
+    def _generate_ice_plots(
+        self,
+        model,
+        X_base: pd.DataFrame,
+        X_train: pd.DataFrame,
+        feature_names: List[str],
+        feature_values: Dict[str, Any],
+        is_classification: bool,
+        current_prediction: float,
+        n_points: int = 50,
+        top_n_features: int = 8
+    ) -> List[ICEPlot]:
+        """
+        Generate ICE (Individual Conditional Expectation) plots for LightGBM.
+        Shows how prediction changes as each feature varies while other features stay fixed.
+        Similar to EBM's shape function plots but computed on-the-fly.
+        """
+        ice_plots = []
+        
+        # Get feature importance to prioritize top features
+        try:
+            importance = model.feature_importances_
+            feature_imp = [(name, imp) for name, imp in zip(feature_names, importance)]
+            feature_imp.sort(key=lambda x: x[1], reverse=True)
+            top_features = [f[0] for f in feature_imp[:top_n_features]]
+        except Exception:
+            top_features = feature_names[:top_n_features]
+        
+        for fname in top_features:
+            try:
+                col_idx = feature_names.index(fname)
+                col_data = X_train[fname]
+                is_categorical = col_data.dtype.name == 'category'
+                
+                current_val = feature_values.get(fname)
+                
+                if is_categorical:
+                    # For categorical: use all unique categories
+                    categories = col_data.cat.categories.tolist()
+                    points = []
+                    
+                    for cat in categories:
+                        X_test = X_base.copy()
+                        X_test[fname] = pd.Categorical([cat], categories=categories)
+                        
+                        try:
+                            if is_classification and hasattr(model, 'predict_proba'):
+                                pred = model.predict_proba(X_test)[0]
+                                y_val = float(pred[-1]) if len(pred) > 1 else float(pred[0])
+                            else:
+                                y_val = float(model.predict(X_test)[0])
+                        except Exception:
+                            # Fallback with numeric codes
+                            X_test_num = X_test.copy()
+                            for c in X_test_num.columns:
+                                if X_test_num[c].dtype.name == 'category':
+                                    X_test_num[c] = X_test_num[c].cat.codes
+                            y_val = float(model.predict(X_test_num)[0])
+                        
+                        points.append(ICEPoint(x=str(cat), y=y_val))
+                    
+                    ice_plots.append(ICEPlot(
+                        feature_name=fname,
+                        feature_type="categorical",
+                        current_value=current_val,
+                        current_prediction=current_prediction,
+                        points=points
+                    ))
+                else:
+                    # For numeric: create a range of values
+                    col_numeric = pd.to_numeric(col_data, errors='coerce')
+                    valid_vals = col_numeric.dropna()
+                    
+                    if len(valid_vals) > 0:
+                        min_val = float(valid_vals.min())
+                        max_val = float(valid_vals.max())
+                        
+                        # Create evenly spaced points
+                        x_range = np.linspace(min_val, max_val, n_points)
+                        points = []
+                        
+                        for x_val in x_range:
+                            X_test = X_base.copy()
+                            X_test[fname] = x_val
+                            
+                            try:
+                                if is_classification and hasattr(model, 'predict_proba'):
+                                    pred = model.predict_proba(X_test)[0]
+                                    y_val = float(pred[-1]) if len(pred) > 1 else float(pred[0])
+                                else:
+                                    y_val = float(model.predict(X_test)[0])
+                            except Exception:
+                                # Fallback with numeric codes
+                                X_test_num = X_test.copy()
+                                for c in X_test_num.columns:
+                                    if X_test_num[c].dtype.name == 'category':
+                                        X_test_num[c] = X_test_num[c].cat.codes
+                                y_val = float(model.predict(X_test_num)[0])
+                            
+                            points.append(ICEPoint(x=float(x_val), y=y_val))
+                        
+                        ice_plots.append(ICEPlot(
+                            feature_name=fname,
+                            feature_type="numeric",
+                            current_value=current_val,
+                            current_prediction=current_prediction,
+                            points=points
+                        ))
+                        
+            except Exception as e:
+                # Skip features that fail
+                print(f"[ICE] Failed to generate ICE plot for {fname}: {e}")
+                continue
+        
+        return ice_plots
     
     # ==================== FEATURE RANGES ====================
     

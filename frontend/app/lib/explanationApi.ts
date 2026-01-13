@@ -69,9 +69,23 @@ export interface WhatIfRequest {
     feature_values: Record<string, number | string | null>;
 }
 
+export interface ICEPoint {
+    x: number | string;
+    y: number;
+}
+
+export interface ICEPlot {
+    feature_name: string;
+    feature_type: 'numeric' | 'categorical';
+    current_value: number | string | null;
+    current_prediction: number;
+    points: ICEPoint[];
+}
+
 export interface WhatIfResponse {
     explanation: LocalExplanation;
     feature_ranges: Record<string, FeatureRangeInfo>;
+    ice_plots?: ICEPlot[];
 }
 
 export interface FeatureRangeInfo {

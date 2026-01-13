@@ -16,6 +16,7 @@ import {
     FeatureImportanceChart,
     ActualVsPredictedPlot,
     WaterfallChart,
+    ICEPlot,
 } from '@/app/components/dashboard';
 
 type TabType = 'overview' | 'shapes' | 'whatif' | 'performance';
@@ -307,6 +308,36 @@ export default function ModelDashboardPage() {
                                         Feature Contributions (Waterfall)
                                     </h3>
                                     <WaterfallChart contributions={whatIfResult.explanation.contributions} />
+                                </div>
+                            )}
+
+                            {/* ICE Plots - Individual Conditional Expectation */}
+                            {whatIfResult && whatIfResult.ice_plots && whatIfResult.ice_plots.length > 0 && (
+                                <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                                    <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                                        Feature Effect Curves (ICE Plots)
+                                    </h3>
+                                    <p className="text-sm text-gray-500 mb-4">
+                                        Shows how the prediction changes as each feature varies. The red dot/line indicates the current value.
+                                    </p>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        {whatIfResult.ice_plots.map(icePlot => (
+                                            <div 
+                                                key={icePlot.feature_name}
+                                                className="border border-gray-200 rounded-lg p-3"
+                                            >
+                                                <div className="text-sm font-medium text-gray-700 mb-2 truncate">
+                                                    {icePlot.feature_name}
+                                                    <span className="text-gray-400 ml-2">
+                                                        (current: {typeof icePlot.current_value === 'number' 
+                                                            ? icePlot.current_value.toFixed(2) 
+                                                            : icePlot.current_value})
+                                                    </span>
+                                                </div>
+                                                <ICEPlot icePlot={icePlot} mini />
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
                             )}
                         </div>
