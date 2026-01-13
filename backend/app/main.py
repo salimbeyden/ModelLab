@@ -1,6 +1,12 @@
+import os
 from fastapi import FastAPI
 from app.core.model_factory import model_factory
 import app.plugins.models # This triggers registration
+
+# Ensure required directories exist (important for Railway volumes)
+os.makedirs("data", exist_ok=True)
+os.makedirs("runs", exist_ok=True)
+os.makedirs("tmp_r", exist_ok=True)
 
 app = FastAPI(title="ModelLab API")
 
