@@ -1,7 +1,23 @@
 import axios from 'axios';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// Determine API URL based on environment
+const getApiBase = () => {
+    // Check for env variable first
+    if (process.env.NEXT_PUBLIC_API_URL) {
+        return process.env.NEXT_PUBLIC_API_URL;
+    }
+    // In browser, check if we're on production
+    if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
+        return 'https://modellab-production.up.railway.app';
+    }
+    // Default to localhost for local development
+    return 'http://localhost:8000';
+};
+
+const API_BASE = getApiBase();
 const API_REF = `${API_BASE}/v1`;
+
+console.log('[API] Using base URL:', API_BASE); // Debug log
 
 export const api = axios.create({
     baseURL: API_REF,
