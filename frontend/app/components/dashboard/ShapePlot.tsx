@@ -89,7 +89,7 @@ export default function ShapePlot({ shapeFunction, mini = false }: ShapePlotProp
         },
         paper_bgcolor: 'transparent',
         plot_bgcolor: 'transparent',
-        hovermode: 'closest',
+        hovermode: 'closest' as const,
         showlegend: false,
     };
 

@@ -66,7 +66,7 @@ export default function ResidualPlot({ residuals, type }: ResidualPlotProps) {
             paper_bgcolor: 'transparent',
             plot_bgcolor: 'transparent',
             showlegend: false,
-            hovermode: 'closest',
+            hovermode: 'closest' as const,
         };
 
         return (
