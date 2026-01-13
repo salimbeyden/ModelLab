@@ -11,8 +11,8 @@ pydantic>=2.6.0
 pandas>=2.2.0
 numpy>=1.26.0
 
-# Machine Learning - EBM
-interpretml>=0.5.1
+# Machine Learning - EBM (InterpretML)
+interpret>=0.6.0
 scikit-learn>=1.4.0
 
 # ML Optimization
