@@ -1,0 +1,26 @@
+# ModelLab Backend Requirements
+# Python 3.11+
+
+# Web Framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9
+
+# Data Processing
+pydantic>=2.6.0
+pandas>=2.2.0
+numpy>=1.26.0
+
+# Machine Learning - EBM
+interpretml>=0.5.1
+scikit-learn>=1.4.0
+
+# ML Optimization
+lightgbm>=4.0.0
+optuna>=3.5.0
+shap>=0.45.0
+
+# Utilities
+pyyaml>=6.0
+requests>=2.31.0
+aiofiles>=23.2.1
